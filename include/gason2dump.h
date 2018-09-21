@@ -1,16 +1,56 @@
 #pragma once
 
+#include "dtoa_milo.h"
 #include "gason2.h"
 #include <stdio.h>
+#include <math.h>
 
 namespace gason2 {
 struct dump {
-    static void stringify(vector<char> &s, value v) {
-        char buf[32];
+    static void writeDouble(vector<char> &s, double d) {
+        if (isnan(d)) {
+            s.append("NaN", 3);
+            return;
+        }
 
+        if (isinf(d)) {
+            if (signbit(d)) {
+                s.reserve(s.size() + 9);
+                s.push_back('-');
+            }
+
+            s.append("Infinity", 8);
+            return;
+        }
+
+        if (d == 0) {
+            if (signbit(d)) {
+                s.reserve(s.size() + 4);
+                s.push_back('-');
+            }
+            s.append("0.0", 3);
+            return;
+        }
+
+        char buffer[25];
+        char *buf_p = buffer;
+
+        if (d < 0) {
+            *buf_p++ = '-';
+            d = -d;
+        }
+
+        int length, K;
+        Grisu2(d, buf_p, &length, &K);
+        Prettify(buf_p, length, K);
+
+        s.append(buf_p, strlen(buf_p));
+    }
+
+    static void stringify(vector<char> &s, value v) {
         switch (v.type()) {
         case type::number:
-            s.append(buf, snprintf(buf, sizeof(buf), "%.10g", v.to_number()));
+            writeDouble(s, v.to_number());
             break;
 
         case type::null:
