@@ -210,7 +210,7 @@ inline void GrisuRound(char* buffer, int len, uint64_t delta, uint64_t rest, uin
 	}
 }
 
-inline unsigned CountDecimalDigit32(uint32_t n) {
+inline int CountDecimalDigit32(uint32_t n) {
 	// Simple pure C++ implementation was faster than __builtin_clz version in this situation.
 	if (n < 10) return 1;
 	if (n < 100) return 2;
@@ -220,8 +220,10 @@ inline unsigned CountDecimalDigit32(uint32_t n) {
 	if (n < 1000000) return 6;
 	if (n < 10000000) return 7;
 	if (n < 100000000) return 8;
-	if (n < 1000000000) return 9;
-	return 10;
+	// Will not reach 10 digits in DigitGen()
+	// if (n < 1000000000) return 9;
+	// return 10;
+	return 9;
 }
 
 inline void DigitGen(const DiyFp& W, const DiyFp& Mp, uint64_t delta, char* buffer, int* len, int* K) {
@@ -230,13 +232,12 @@ inline void DigitGen(const DiyFp& W, const DiyFp& Mp, uint64_t delta, char* buff
 	const DiyFp wp_w = Mp - W;
 	uint32_t p1 = static_cast<uint32_t>(Mp.f >> -one.e);
 	uint64_t p2 = Mp.f & (one.f - 1);
-	int kappa = static_cast<int>(CountDecimalDigit32(p1));
+	int kappa = CountDecimalDigit32(p1);
 	*len = 0;
 
 	while (kappa > 0) {
-		uint32_t d;
+		uint32_t d = 0;
 		switch (kappa) {
-			case 10: d = p1 / 1000000000; p1 %= 1000000000; break;
 			case  9: d = p1 /  100000000; p1 %=  100000000; break;
 			case  8: d = p1 /   10000000; p1 %=   10000000; break;
 			case  7: d = p1 /    1000000; p1 %=    1000000; break;
@@ -246,14 +247,7 @@ inline void DigitGen(const DiyFp& W, const DiyFp& Mp, uint64_t delta, char* buff
 			case  3: d = p1 /        100; p1 %=        100; break;
 			case  2: d = p1 /         10; p1 %=         10; break;
 			case  1: d = p1;              p1 =           0; break;
-			default: 
-#if defined(_MSC_VER)
-				__assume(0);
-#elif __GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 5)
-				__builtin_unreachable();
-#else
-				d = 0;
-#endif
+			default:;
 		}
 		if (d || *len)
 			buffer[(*len)++] = '0' + static_cast<char>(d);
@@ -272,12 +266,13 @@ inline void DigitGen(const DiyFp& W, const DiyFp& Mp, uint64_t delta, char* buff
 		delta *= 10;
 		char d = static_cast<char>(p2 >> -one.e);
 		if (d || *len)
-			buffer[(*len)++] = '0' + d;
+			buffer[(*len)++] = '0' + static_cast<char>(d);
 		p2 &= one.f - 1;
 		kappa--;
 		if (p2 < delta) {
 			*K += kappa;
-			GrisuRound(buffer, *len, delta, p2, one.f, wp_w.f * kPow10[-kappa]);
+			int index = -kappa;
+			GrisuRound(buffer, *len, delta, p2, one.f, wp_w.f * (index < 9 ? kPow10[index] : 0));
 			return;
 		}
 	}
@@ -313,7 +308,7 @@ inline const char* GetDigitsLut() {
 	return cDigitsLut;
 }
 
-inline void WriteExponent(int K, char* buffer) {
+inline char* WriteExponent(int K, char* buffer) {
 	if (K < 0) {
 		*buffer++ = '-';
 		K = -K;
@@ -334,10 +329,10 @@ inline void WriteExponent(int K, char* buffer) {
 	else
 		*buffer++ = '0' + static_cast<char>(K);
 
-	*buffer = '\0';
+	return buffer;
 }
 
-inline void Prettify(char* buffer, int length, int k) {
+inline char* Prettify(char* buffer, int length, int k, int maxDecimalPlaces) {
 	const int kk = length + k;	// 10^(kk-1) <= v < 10^kk
 
 	if (length <= kk && kk <= 21) {
@@ -346,13 +341,21 @@ inline void Prettify(char* buffer, int length, int k) {
 			buffer[i] = '0';
 		buffer[kk] = '.';
 		buffer[kk + 1] = '0';
-		buffer[kk + 2] = '\0';
+		return &buffer[kk + 2];
 	}
-	else if (0 < kk && kk <= 21) {
+	if (0 < kk && kk <= 21) {
 		// 1234e-2 -> 12.34
 		memmove(&buffer[kk + 1], &buffer[kk], length - kk);
 		buffer[kk] = '.';
-		buffer[length + 1] = '\0';
+		if (0 > k + maxDecimalPlaces) {
+			// When maxDecimalPlaces = 2, 1.2345 -> 1.23, 1.102 -> 1.1
+			// Remove extra trailing zeros (at least one) after truncation.
+			for (int i = kk + maxDecimalPlaces; i > kk + 1; i--)
+				if (buffer[i] != '0')
+					return &buffer[i + 1];
+			return &buffer[kk + 2]; // Reserve one zero
+		}
+		return &buffer[length + 1];
 	}
 	else if (-6 < kk && kk <= 0) {
 		// 1234e-6 -> 0.001234
@@ -362,23 +365,38 @@ inline void Prettify(char* buffer, int length, int k) {
 		buffer[1] = '.';
 		for (int i = 2; i < offset; i++)
 			buffer[i] = '0';
-		buffer[length + offset] = '\0';
+		if (length - kk > maxDecimalPlaces) {
+			// When maxDecimalPlaces = 2, 0.123 -> 0.12, 0.102 -> 0.1
+			// Remove extra trailing zeros (at least one) after truncation.
+			for (int i = maxDecimalPlaces + 1; i > 2; i--)
+				if (buffer[i] != '0')
+					return &buffer[i + 1];
+			return &buffer[3]; // Reserve one zero
+		}
+		return &buffer[length + offset];
 	}
-	else if (length == 1) {
+	if (kk < -maxDecimalPlaces) {
+		// Truncate to zero
+		buffer[0] = '0';
+		buffer[1] = '.';
+		buffer[2] = '0';
+		return &buffer[3];
+	}
+	if (length == 1) {
 		// 1e30
 		buffer[1] = 'e';
-		WriteExponent(kk - 1, &buffer[2]);
+		return WriteExponent(kk - 1, &buffer[2]);
 	}
-	else {
-		// 1234e30 -> 1.234e33
-		memmove(&buffer[2], &buffer[1], length - 1);
-		buffer[1] = '.';
-		buffer[length + 1] = 'e';
-		WriteExponent(kk - 1, &buffer[0 + length + 2]);
-	}
+
+	// 1234e30 -> 1.234e33
+	memmove(&buffer[2], &buffer[1], length - 1);
+	buffer[1] = '.';
+	buffer[length + 1] = 'e';
+	return WriteExponent(kk - 1, &buffer[0 + length + 2]);
 }
 
-inline void dtoa_milo(double value, char* buffer) {
+inline char* dtoa(double value, char* buffer, int maxDecimalPlaces = 324) {
+	assert(maxDecimalPlaces >= 1);
 	// Not handling NaN and inf
 	assert(!isnan(value));
 	assert(!isinf(value));
@@ -387,15 +405,14 @@ inline void dtoa_milo(double value, char* buffer) {
 		buffer[0] = '0';
 		buffer[1] = '.';
 		buffer[2] = '0';
-		buffer[3] = '\0';
+		return &buffer[3];
 	}
-	else {
-		if (value < 0) {
-			*buffer++ = '-';
-			value = -value;
-		}
-		int length, K;
-		Grisu2(value, buffer, &length, &K);
-		Prettify(buffer, length, K);
+
+	if (value < 0) {
+		*buffer++ = '-';
+		value = -value;
 	}
+	int length, K;
+	Grisu2(value, buffer, &length, &K);
+	return Prettify(buffer, length, K, maxDecimalPlaces);
 }

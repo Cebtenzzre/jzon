@@ -35,16 +35,16 @@ struct dump {
         char buffer[25];
         char *buf_p = buffer;
 
-        if (d < 0) {
+        if (signbit(d)) {
             *buf_p++ = '-';
             d = -d;
         }
 
         int length, K;
         Grisu2(d, buf_p, &length, &K);
-        Prettify(buf_p, length, K);
+        char *end = Prettify(buf_p, length, K, 324);
 
-        s.append(buf_p, strlen(buf_p));
+        s.append(buf_p, end - buf_p);
     }
 
     static void stringify(vector<char> &s, value v) {
