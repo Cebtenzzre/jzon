@@ -179,18 +179,25 @@ struct dump {
         }
     }
 
-    static int format_error(char *str, size_t n, const char *filename, const char *json, const document &doc) {
+    static int format_error(char *str, size_t n, const char *filename, char *json, const char *end, const document &doc) {
+        assert(json <= end);
         int lineno = 1;
         const char *left = json;
-        const char *right = json;
-        const char *endptr = json + doc.error_offset();
-        while (*right)
-            if (*right++ == '\n') {
+        char *right = json;
+        char *endptr = json + doc.error_offset();
+        while (right < end) {
+            if (*right == '\n') {
+                ++right;
                 if (endptr < right)
                     break;
                 left = right;
                 ++lineno;
+                continue;
             }
+            if (!*right)
+                *right = ' ';
+            ++right;
+        }
 
         int column = endptr - left;
         if (column > 80)
@@ -217,9 +224,9 @@ struct dump {
         return snprintf(str, n, "%s:%d:%d: error: %s\n%.*s\n%*s\n", filename, lineno, column, desc, int(right - left), left, int(endptr - left), "^");
     }
 
-    static int print_error(const char *filename, const char *json, const document &doc) {
+    static int print_error(const char *filename, char *json, char const *end, const document &doc) {
         char buffer[256];
-        int n = format_error(buffer, sizeof(buffer), filename, json, doc);
+        int n = format_error(buffer, sizeof(buffer), filename, json, end, doc);
         if (n > 0)
             return fwrite(buffer, 1, n, stderr);
         return n;

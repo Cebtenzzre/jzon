@@ -293,6 +293,11 @@ struct parser {
         if (s.peek() == '.') {
             s.getch();
 
+#ifdef GASON2_STRICT
+            if (!is_digit(s.peek()))
+                return error::invalid_number;
+#endif
+
             while (is_digit(s.peek()) && integer < 0x1FFFFFFFFFFFFFull) {
                 integer = (integer * 10) + (s.getch() - '0');
                 --fraction;
@@ -508,8 +513,10 @@ struct parser {
         }
         case '-':
             s.getch();
-            if (is_digit(s.peek()))
-                return -parse_number(s).number;
+            if (is_digit(s.peek())) {
+                var_t tmp = parse_number(s);
+                return tmp.is_error() ? tmp : -tmp.number;
+            }
             break;
         default:
             if (is_digit(s.peek()))
@@ -524,13 +531,16 @@ class document : public value {
     vector<var_t> _storage;
 
 public:
-    bool parse(const char *json) {
+    bool parse(const char *json, const char *end) {
+        assert(json <= end);
         stream s{json};
         parser p;
         _data = p.parse_value(s);
 
-        if (!_data.is_error() && s.skipws())
+        if (!_data.is_error() && (s.skipws(), s.c_str() < end)) {
+            s.getch();
             _data = error::unexpected_character;
+        }
 
         if (_data.is_error()) {
             _data.payload = s.c_str() - json;
